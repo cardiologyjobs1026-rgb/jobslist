@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A7 Jobs list</title>
+<style>
+:root{--ink:#1c2430;--line:#c9d1dc;--head:#17375e;--accent:#1f6feb;--ok:#7ee2a0;--warn:#ffd28a}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font:14px/1.3 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink);background:#f4f6f9;display:flex;flex-direction:column}
+header{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;padding:8px 14px;background:var(--head);color:#fff}
+header h1{margin:0;font-size:22px;letter-spacing:.3px}
+.status{font-size:12px;display:flex;gap:12px;flex-wrap:wrap;opacity:.95}
+.status .ok{color:var(--ok)} .status .warn{color:var(--warn)}
+.spacer{flex:1}
+button{font:inherit;cursor:pointer;border:0;border-radius:6px;padding:6px 12px;background:#fff;color:var(--head);font-weight:600}
+button.primary{background:var(--accent);color:#fff}
+button.danger{color:#b42318}
+#banner{display:none;background:#fff4d6;border-bottom:1px solid #e6c36a;padding:6px 14px;font-size:13px}
+#banner button{margin-left:8px;padding:3px 10px;background:var(--head);color:#fff}
+main{flex:1;overflow:auto;padding:8px}
+table{width:100%;min-width:980px;border-collapse:collapse;table-layout:fixed;background:#fff}
+th,td{border:1px solid var(--line);vertical-align:top;padding:3px}
+thead th{position:sticky;top:-8px;z-index:5;background:#e8eef6;font-size:12px;text-transform:uppercase;padding:7px 3px;box-shadow:0 1px 0 var(--line)}
+tr.first td{border-top:2px solid #6b7a90}
+td.bed{border-left-width:6px}
+.bedname{font-weight:700;font-size:13px;margin-bottom:2px}
+input[type=text]{width:100%;font:inherit;font-size:12.5px;border:1px solid #d5dbe4;border-radius:4px;padding:3px 5px;background:#fbfcfe}
+input[type=text]:focus,.ed:focus{outline:2px solid var(--accent);outline-offset:-1px}
+.ed{min-height:46px;padding:3px 4px;font-size:13px;white-space:pre-wrap;word-break:break-word;border-radius:4px}
+.ed:empty::before{content:attr(data-ph);color:#a3acb9}
+.chips{min-height:30px;padding:2px;cursor:pointer;border:1px dashed #b9c3d1;border-radius:4px;display:flex;flex-wrap:wrap;gap:3px;align-content:flex-start}
+.chips:hover{background:#f1f6ff}
+.chip{background:#dbe8ff;color:#12407f;border-radius:10px;padding:1px 7px;font-size:12px;font-weight:600}
+.ph{color:#8b95a3;font-size:12px;padding:2px 4px}
+.multi input[type=text]{margin-top:3px}
+#pop{display:none;position:fixed;z-index:50;background:#fff;border:1px solid #8a97a8;border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.25);padding:6px;max-height:80vh;overflow:auto;grid-gap:2px 14px}
+#pop label{display:flex;gap:6px;align-items:center;padding:4px 6px;border-radius:4px;cursor:pointer;white-space:nowrap}
+#pop label:hover{background:#eef4ff}
+@media (max-width:900px){header h1{font-size:18px}}
+</style>
+</head>
+<body>
+<header>
+  <h1>A7 Jobs list</h1>
+  <div class="status">
+    <span id="stSave">Loading…</span>
+    <span id="stRefresh"></span>
+    <span id="stExpiry"></span>
+  </div>
+  <div class="spacer"></div>
+  <button id="bSync" title="Save and fetch the latest from everyone">Refresh now</button>
+  <button id="bPdf" class="primary">Output PDF</button>
+  <button id="bWord" class="primary">Output Word</button>
+  <button id="bReset" class="danger">New list</button>
+</header>
+<div id="banner">Output generated – auto-refresh is paused. <button id="bResume">Resume auto-refresh</button></div>
+<main id="main">
+  <table>
+    <colgroup id="cols"></colgroup>
+    <thead><tr id="thr"></tr></thead>
+    <tbody id="tb"></tbody>
+  </table>
+</main>
+<div id="pop"></div>
+
+<script>
+/* ---------- configuration ---------- */
+const REFRESH_MS = 10 * 60 * 1000;   // auto-refresh every 10 minutes
+const SAVE_DELAY = 1500;             // save 1.5 s after the last keystroke
+const DAY_MS     = 24 * 60 * 60 * 1000;
+
+const DISC  = ['TTA','DS','OP CMRI','OP TTE','Holter'];
+const SCANS = ['TTE','CTCA','CTPA','CMRI','CTH','CT Aorta','CT intracranials','CT aortic arch + Carotids','CT-TAVI','Spirometry/LFT','CXR','Angiogram','TAVI','PPM','MTEER','Carotid US','Triple Phase CT','Dental','Pacing check','CTPET','Holter'];
+const REFS  = ['CTS','Renal','Haem','Rheum','Micro/ID','Stroke','Neuro','Vascular','Resp','Gastro','MfE','Palliative','JCC','IE','Mitral','EP','TAVI'];
+
+const GROUPS = [
+  {name:'CCU', color:'#c0392b', page:1, beds:[1,2,3,4,5].map(n => ['CCU'+n, 'CCU '+n])},
+  {name:'A',   color:'#2e86de', page:1, beds:[1,2,3,4].map(n => ['A'+n, 'A'+n])},
+  {name:'B',   color:'#27ae60', page:1, beds:[1,2,3,4].map(n => ['B'+n, 'B'+n])},
+  {name:'C',   color:'#e67e22', page:2, beds:[1,2,3,4].map(n => ['C'+n, 'C'+n])},
+  {name:'D',   color:'#8e44ad', page:2, beds:[1,2,3,4].map(n => ['D'+n, 'D'+n])},
+  {name:'Side',color:'#7f8c8d', page:2, beds:['E','F','G','H'].map(l => [l, 'Side ' + l])}
+];
+const COLS = [
+  {k:'bed',  t:'Bed',               w:9},
+  {k:'disc', t:'Discharge',         w:9},
+  {k:'adm',  t:'Admission Summary', w:15.5},
+  {k:'scan', t:'Scans / Misc',      w:17},
+  {k:'ref',  t:'Referral',          w:15},
+  {k:'med',  t:'Medication',        w:11.5},
+  {k:'bin',  t:'Bloods in',         w:11.5},
+  {k:'bout', t:'Bloods out',        w:11.5}
+];
+
+/* ---------- helpers ---------- */
+const $ = id => document.getElementById(id);
+function h(tag, attrs, ...kids){
+  const e = document.createElement(tag);
+  for (const k in (attrs||{})) {
+    if (k === 'class') e.className = attrs[k];
+    else if (k === 'style') e.style.cssText = attrs[k];
+    else e.setAttribute(k, attrs[k]);
+  }
+  kids.forEach(c => e.append(c));
+  return e;
+}
+const norm = v => v == null ? '' : Array.isArray(v) ? (v.length ? JSON.stringify(v) : '') : String(v);
+const pad = n => String(n).padStart(2,'0');
+const fmtTime = d => pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+
+/* ---------- state ---------- */
+const local = {};      // key -> value (what this screen shows)
+const dirty = {};      // key -> value waiting to be saved
+const controls = {};   // key -> {el, set(v)}
+let startedAt = null, saveT = null, syncing = false, again = false;
+let refreshTimer = null, nextAt = 0, paused = false, expiring = false;
+
+/* ---------- network ---------- */
+async function api(method, body){
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const headers = {'content-type':'application/json'};
+    const code = localStorage.getItem('a7code');
+    if (code) headers['x-access-code'] = code;
+    const r = await fetch('/api/list', {method, headers, body: body ? JSON.stringify(body) : undefined, cache:'no-store'});
+    if (r.status === 401) {
+      const c = prompt('Enter the A7 access code:');
+      if (!c) throw new Error('auth');
+      localStorage.setItem('a7code', c);
+      continue;
+    }
+    if (!r.ok) throw new Error('http ' + r.status);
+    return r.json();
+  }
+  throw new Error('auth');
+}
+
+function setStatus(text, cls){ const s = $('stSave'); s.textContent = text; s.className = cls || ''; }
+
+function setField(k, v){
+  local[k] = v; dirty[k] = v;
+  setStatus('Editing…', 'warn');
+  clearTimeout(saveT);
+  saveT = setTimeout(sync, SAVE_DELAY);
+}
+
+async function sync(){
+  if (syncing) { again = true; return; }
+  syncing = true; clearTimeout(saveT);
+  const sent = {...dirty};
+  try {
+    setStatus('Saving…', 'warn');
+    const data = Object.keys(sent).length ? await api('POST', {changes: sent}) : await api('GET');
+    for (const k in sent) if (JSON.stringify(dirty[k]) === JSON.stringify(sent[k])) delete dirty[k];
+    applyRemote(data);
+    setStatus('Saved ✓ ' + fmtTime(new Date()), 'ok');
+  } catch (e) {
+    setStatus('Offline – retrying…', 'warn');
+    saveT = setTimeout(sync, 15000);
+  } finally {
+    syncing = false;
+    if (again) { again = false; sync(); }
+  }
+}
+
+function applyRemote(d){
+  const f = d.fields || {};
+  startedAt = d.startedAt || null;
+  expiring = false;
+  for (const k of Object.keys(controls)) {
+    if (k in dirty) continue;
+    const rv = f[k] ? f[k].v : undefined;
+    if (norm(rv) === norm(local[k])) continue;
+    if (document.activeElement === controls[k].el) continue;
+    if (rv === undefined) delete local[k]; else local[k] = rv;
+    controls[k].set(local[k]);
+  }
+}
+
+/* ---------- controls ---------- */
+function ctlInput(key, ph, max){
+  const el = h('input', {type:'text', placeholder:ph, maxlength:max});
+  el.addEventListener('input', () => setField(key, el.value));
+  controls[key] = {el, set: v => { el.value = v || ''; }};
+  return el;
+}
+function ctlArea(key, ph){
+  const el = h('div', {class:'ed', contenteditable:'true', 'data-ph':ph});
+  el.addEventListener('input', () => setField(key, el.innerText.replace(/\n+$/, '')));
+  el.addEventListener('paste', e => {
+    e.preventDefault();
+    const t = (e.clipboardData || window.clipboardData).getData('text');
+    document.execCommand('insertText', false, t);
+  });
+  controls[key] = {el, set: v => { el.innerText = v || ''; }};
+  return el;
+}
+function ctlMulti(key, options, other){
+  const wrap = h('div', {class:'multi'});
+  const chips = h('div', {class:'chips', tabindex:'0', title:'Click to choose (multiple allowed)'});
+  const render = v => {
+    chips.textContent = '';
+    const sel = Array.isArray(v) ? v : [];
+    if (!sel.length) chips.append(h('span', {class:'ph'}, 'Select…'));
+    options.filter(o => sel.includes(o)).forEach(o => chips.append(h('span', {class:'chip'}, o)));
+  };
+  chips.addEventListener('click', () => openPop(key, options, chips));
+  chips.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPop(key, options, chips); } });
+  controls[key] = {el: chips, set: render};
+  render([]);
+  wrap.append(chips);
+  if (other) wrap.append(ctlInput(key + 'O', 'Other…', 60));
+  return wrap;
+}
+
+/* ---------- multi-select popover ---------- */
+const pop = $('pop'); let popKey = null;
+function openPop(key, options, anchor){
+  if (popKey === key) { closePop(); return; }
+  popKey = key; pop.textContent = '';
+  const sel = new Set(local[key] || []);
+  options.forEach(o => {
+    const cb = h('input', {type:'checkbox'});
+    cb.checked = sel.has(o);
+    cb.addEventListener('change', () => {
+      const cur = new Set(local[key] || []);
+      cb.checked ? cur.add(o) : cur.delete(o);
+      const arr = options.filter(x => cur.has(x));
+      setField(key, arr); controls[key].set(arr);
+    });
+    pop.append(h('label', {}, cb, o));
+  });
+  pop.style.display = 'grid';
+  pop.style.gridTemplateColumns = options.length > 8 ? 'repeat(2,auto)' : 'auto';
+  const r = anchor.getBoundingClientRect();
+  const ph = pop.offsetHeight, pw = pop.offsetWidth;
+  let top = r.bottom + 2; if (top + ph > innerHeight - 4) top = Math.max(4, r.top - ph - 2);
+  const left = Math.max(4, Math.min(r.left, innerWidth - pw - 4));
+  pop.style.top = top + 'px'; pop.style.left = left + 'px';
+}
+function closePop(){ pop.style.display = 'none'; popKey = null; }
+document.addEventListener('mousedown', e => { if (popKey && !pop.contains(e.target) && !e.target.closest('.chips')) closePop(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closePop(); });
+$('main').addEventListener('scroll', closePop);
+window.addEventListener('resize', closePop);
+
+/* ---------- build the table ---------- */
+COLS.forEach(c => {
+  $('cols').append(h('col', {style:'width:' + c.w + '%'}));
+  $('thr').append(h('th', {}, c.t));
+});
+GROUPS.forEach(g => g.beds.forEach(([id, label], i) => {
+  const tr = h('tr', {class: i === 0 ? 'first' : ''});
+  tr.append(h('td', {class:'bed', style:'border-left-color:' + g.color},
+    h('div', {class:'bedname'}, label), ctlInput(id + '|init', 'Initials', 10)));
+  tr.append(h('td', {}, ctlMulti(id + '|disc', DISC, false)));
+  tr.append(h('td', {}, ctlArea(id + '|adm', 'Admission summary')));
+  tr.append(h('td', {}, ctlMulti(id + '|scan', SCANS, true)));
+  tr.append(h('td', {}, ctlMulti(id + '|ref', REFS, true)));
+  tr.append(h('td', {}, ctlArea(id + '|med', 'Medication')));
+  tr.append(h('td', {}, ctlArea(id + '|bin', 'Bloods in')));
+  tr.append(h('td', {}, ctlArea(id + '|bout', 'Bloods out')));
+  $('tb').append(tr);
+}));
+
+/* ---------- 10-minute auto-refresh ---------- */
+function startRefresh(){
+  stopRefresh(); paused = false; $('banner').style.display = 'none';
+  nextAt = Date.now() + REFRESH_MS;
+  refreshTimer = setInterval(() => { nextAt = Date.now() + REFRESH_MS; sync(); }, REFRESH_MS);
+}
+function stopRefresh(){ clearInterval(refreshTimer); refreshTimer = null; }
+
+setInterval(() => {
+  $('stRefresh').textContent = paused ? 'Auto-refresh paused'
+    : 'Next auto-refresh ' + pad(Math.max(0, Math.floor((nextAt - Date.now()) / 60000))) + ':' + pad(Math.max(0, Math.floor(((nextAt - Date.now()) % 60000) / 1000)));
+  if (startedAt) {
+    const left = startedAt + DAY_MS - Date.now();
+    if (left <= 0) { if (!expiring) { expiring = true; sync(); } $('stExpiry').textContent = 'List expired'; }
+    else $('stExpiry').textContent = 'List resets in ' + Math.floor(left / 3600000) + 'h ' + pad(Math.floor((left % 3600000) / 60000)) + 'm';
+  } else $('stExpiry').textContent = 'Autosave starts when someone first types';
+}, 1000);
+
+document.addEventListener('visibilitychange', () => { if (document.hidden && Object.keys(dirty).length) sync(); });
+
+/* ---------- output (PDF via print, Word via .doc) ---------- */
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])).replace(/\n/g, '<br>');
+const val = (id, f) => local[id + '|' + f];
+const list = a => (Array.isArray(a) ? a : []).join(', ');
+const withOther = (id, f) => [list(val(id, f)), val(id, f + 'O')].filter(Boolean).join(', ');
+
+function pageHTML(pageNo, stamp, firstPage){
+  const rows = [];
+  GROUPS.filter(g => g.page === pageNo).forEach(g => g.beds.forEach(([id, label], i) => {
+    rows.push('<tr class="r' + (i === 0 ? ' f' : '') + '">' +
+      '<td class="bd"><b>' + esc(label) + '</b><br>' + esc(val(id, 'init')) + '</td>' +
+      '<td>' + esc(list(val(id, 'disc'))) + '</td>' +
+      '<td>' + esc(val(id, 'adm')) + '</td>' +
+      '<td>' + esc(withOther(id, 'scan')) + '</td>' +
+      '<td>' + esc(withOther(id, 'ref')) + '</td>' +
+      '<td>' + esc(val(id, 'med')) + '</td>' +
+      '<td>' + esc(val(id, 'bin')) + '</td>' +
+      '<td>' + esc(val(id, 'bout')) + '</td></tr>');
+  }));
+  const cg = COLS.map(c => '<col style="width:' + c.w + '%">').join('');
+  const th = COLS.map(c => '<th>' + c.t + '</th>').join('');
+  return '<p class="t"' + (firstPage ? '' : ' style="page-break-before:always"') + '><b>A7 Jobs list</b>' +
+    ' <span class="s">&nbsp;&nbsp;' + stamp + ' &nbsp;·&nbsp; page ' + pageNo + ' of 2</span></p>' +
+    '<table><colgroup>' + cg + '</colgroup><thead><tr>' + th + '</tr></thead><tbody>' + rows.join('') + '</tbody></table>';
+}
+
+function buildOutput(kind){
+  const stamp = new Date().toLocaleString('en-GB');
+  const isWord = kind === 'word';
+  const css = (isWord
+    ? '@page WordSection1{size:841.9pt 595.3pt;mso-page-orientation:landscape;margin:22pt 24pt 22pt 24pt}div.WordSection1{page:WordSection1}'
+    : '@page{size:A4 landscape;margin:7mm}') +
+    'body{font-family:Arial,Helvetica,sans-serif;margin:0;color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
+    'p.t{font-size:16pt;margin:0 0 4pt}p.t .s{font-size:8pt;color:#444}' +
+    'table{width:100%;border-collapse:collapse;table-layout:fixed}' +
+    'th,td{border:1px solid #000;padding:2pt 3pt;font-size:8.5pt;vertical-align:top;word-wrap:break-word}' +
+    'th{background:#d9e2f0;font-size:8pt;text-align:left;height:16pt}' +
+    'tr.r{height:' + (isWord ? '35pt' : '12.6mm') + '}tr.f td{border-top:2px solid #000}td.bd{font-size:9pt}';
+  const body = pageHTML(1, stamp, true) + pageHTML(2, stamp, false);
+  return '<!doctype html><html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">' +
+    '<head><meta charset="utf-8"><title>A7 Jobs list</title><style>' + css + '</style></head><body>' +
+    (isWord ? '<div class="WordSection1">' + body + '</div>' : body) + '</body></html>';
+}
+
+function printHTML(html){
+  const old = $('pf'); if (old) old.remove();
+  const f = h('iframe', {id:'pf', style:'position:fixed;right:0;bottom:0;width:0;height:0;border:0'});
+  document.body.append(f);
+  f.onload = () => setTimeout(() => { f.contentWindow.focus(); f.contentWindow.print(); }, 300);
+  f.srcdoc = html;
+}
+
+async function generate(kind){
+  await sync();                       // pull everyone's latest first
+  const html = buildOutput(kind);
+  paused = true; stopRefresh();       // output generated -> stop auto-refresh
+  $('banner').style.display = 'block';
+  if (kind === 'word') {
+    const d = new Date();
+    const name = 'A7_Jobs_list_' + d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + '.doc';
+    const a = h('a', {href: URL.createObjectURL(new Blob(['\ufeff', html], {type:'application/msword'})), download: name});
+    document.body.append(a); a.click(); a.remove();
+  } else {
+    printHTML(html);
+  }
+}
+
+/* ---------- buttons ---------- */
+$('bSync').onclick   = sync;
+$('bPdf').onclick    = () => generate('pdf');
+$('bWord').onclick   = () => generate('word');
+$('bResume').onclick = () => { startRefresh(); sync(); };
+$('bReset').onclick  = async () => {
+  if (!confirm('Start a NEW list? This clears every bed for everyone.')) return;
+  try {
+    await api('POST', {reset:true});
+    for (const k of Object.keys(controls)) { delete local[k]; delete dirty[k]; controls[k].set(undefined); }
+    startedAt = null; setStatus('New list started ✓', 'ok');
+  } catch (e) { setStatus('Could not reset – offline?', 'warn'); }
+};
+
+/* ---------- go ---------- */
+sync().then(startRefresh);
+</script>
+</body>
+</html>
